@@ -244,6 +244,7 @@ class ArduPilotLogHandler:
                 instance_key = self.log_format[msg_type].get("InstanceKey", 0)
                 instance = 0
                 msg_path = f"MessageType={msg_type}"
+                self.print_progress()
 
                 for key, value in msg.to_dict().items():
                     if key in ["TimeUS", "MessageType", "mavpackettype"]:
@@ -316,7 +317,7 @@ class ArduPilotLogHandler:
             df = pd.DataFrame(data)
             table = pa.Table.from_pandas(df, schema=schema)
             pq.write_table(table, output_path)
-
+        print('')
         logger.debug("Telemetry data extraction completed.")
         mavlog.rewind()
 
@@ -335,9 +336,11 @@ class ArduPilotLogHandler:
                     self.process_fmt(msg, log_format)
                 elif msg.get_type() == "FMTU":
                     self.process_fmtu(msg, log_format)
+                self.print_progress()
             except Exception as e:
                 logger.error(f"Error processing {msg}: {e}")
                 break
+        print('')
         logger.debug(f"Extracted log format size: {len(log_format)}")
         self.log_format = log_format
         mavlog.rewind()
@@ -393,6 +396,7 @@ class ArduPilotLogHandler:
             try:
                 msg = mavlog.recv_match()
                 if msg is None or msg.get_type() is None:
+                    print('')
                     logger.debug("No more messages to process.")
                     break
                 line_number += 1
@@ -401,6 +405,7 @@ class ArduPilotLogHandler:
 
                 msg_path = f"MessageType={msg.get_type()}"
                 instance = msg.get_srcComponent()
+                self.print_progress()
                 for key, value in msg.to_dict().items():
                     value_str, val, binary_value = None, None, None
 
@@ -466,6 +471,16 @@ class ArduPilotLogHandler:
 
         logger.debug("Telemetry data extraction completed.")
         mavlog.rewind()
+    
+    def print_progress(self, threshold=100000):
+        """Prints progress message after every threshold messages."""
+        # create a static variable to keep track of the count
+        if not hasattr(self, "_progress_count"):
+            self._progress_count = 0
+        self._progress_count += 1
+        if self._progress_count % threshold == 0:
+            print('.', end='', flush=True)
+            self._progress_count = 0
 
 
 if __name__ == "__main__":
