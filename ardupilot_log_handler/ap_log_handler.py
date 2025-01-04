@@ -113,7 +113,7 @@ class ArduPilotLogHandler:
         gps_fix = False
         while True:
             try:
-                msg = mavlog.recv_match(type=['GPS_RAW_INT', 'STATUSTEXT', 'PARAM_VALUE'])
+                msg = mavlog.recv_match(type=['STATUSTEXT', 'PARAM_VALUE', 'SYSTEM_TIME'])
                 if msg is None or msg.get_type() is None:
                     logger.debug("End of file reached.")
                     break
@@ -123,12 +123,9 @@ class ArduPilotLogHandler:
                     if self.cube_id:
                         logger.debug(f"Extracted cube_id: {self.cube_id}")
 
-                if msg.get_type() == "GPS_RAW_INT" and msg.fix_type > 3:
-                    gps_fix = True
-                
-                if msg.get_type() == "SYSTEM_TIME" and gps_fix and not self.start_time:
-                    msg['_timestamp'] = (msg.time_unix_usec/1000) - msg.time_boot_ms
-                    self.start_time = self.extract_log_timestamp(msg)
+                if msg.get_type() == "SYSTEM_TIME" and not self.start_time:
+                    logger.debug(f"{msg}")
+                    self.start_time = (msg.time_unix_usec - msg.time_boot_ms) / 1_000_000
                     logger.debug(f"Extracted timestamp: {self.start_time}")
 
                 if (msg.get_type() == 'PARAM_VALUE' and
@@ -149,7 +146,7 @@ class ArduPilotLogHandler:
     def process_bin_on_the_fly(self):
         """Processes BIN files and extracts necessary details on the fly."""
         mavlog = mavutil.mavlink_connection(self.log_file_path)
-        self.start_time = mavlog.clock.timebase
+        self.start_time = mavlog.clock.timebase # in seconds
         while True:
             msg = mavlog.recv_match(blocking=True)
             if not msg:
@@ -164,10 +161,6 @@ class ArduPilotLogHandler:
                     and not self.boot_number):
                 self.boot_number = int(msg.Value)
                 logger.debug(f"Extracted boot_number: {self.boot_number}")
-
-            if not self.start_time:
-                self.start_time = self.extract_log_timestamp(msg)
-                logger.debug(f"Extracted timestamp: {self.start_time}")
 
             if self.cube_id and self.boot_number and self.start_time:
                 logger.debug("All required info extracted. Exiting early.")
@@ -193,12 +186,6 @@ class ArduPilotLogHandler:
             if match:
                 return match.group(1).strip()
         return None
-
-    def extract_log_timestamp(self, msg):
-        """Extracts the timestamp from the message."""
-        if self.log_type == "TLOG":
-            return datetime.fromtimestamp(msg._timestamp - self.clock_offset, tz=timezone.utc)
-        return datetime.fromtimestamp(msg._timestamp, tz=timezone.utc)
 
     def extract_log_ts_ms(self, msg) -> Optional[int]:
         """Extract timestamp in milliseconds from a log message."""
