@@ -125,7 +125,8 @@ class ArduPilotLogHandler:
 
                 if msg.get_type() == "SYSTEM_TIME" and not self.start_time:
                     logger.debug(f"{msg}")
-                    self.start_time = (msg.time_unix_usec - msg.time_boot_ms) / 1_000_000
+                    self.start_time = ((msg.time_unix_usec - msg.time_boot_ms) / 1_000_000)
+                    self.start_time -= self.clock_offset
                     logger.debug(f"Extracted timestamp: {self.start_time}")
 
                 if (msg.get_type() == 'PARAM_VALUE' and
