@@ -28,9 +28,6 @@ for lib in ('boto3', 'botocore', 'urllib3', 'pandas',
     logging.getLogger(lib).setLevel(logging.WARNING)
 
 
-logger = logging.getLogger(__name__)
-
-
 class ArduPilotLogHandler:
     def __init__(self, log_file_path: str, output_path: str = "output"):
         logger.debug(f"Initializing log handler for {log_file_path}")
@@ -124,7 +121,6 @@ class ArduPilotLogHandler:
                         logger.debug(f"Extracted cube_id: {self.cube_id}")
 
                 if msg.get_type() == "SYSTEM_TIME" and not self.start_time:
-                    logger.debug(f"{msg}")
                     self.start_time = ((msg.time_unix_usec - msg.time_boot_ms) / 1_000_000)
                     self.start_time -= self.clock_offset
                     logger.debug(f"Extracted timestamp: {self.start_time}")
