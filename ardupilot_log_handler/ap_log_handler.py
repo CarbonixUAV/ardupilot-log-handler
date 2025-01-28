@@ -34,6 +34,7 @@ class ArduPilotLogHandler:
         self.cube_id = None
         self.start_time = None
         self.boot_time = None
+        self.boot_time_diff = None
         self.boot_number = 0
         self.log_uid = None
         self.log_type = None
@@ -145,11 +146,15 @@ class ArduPilotLogHandler:
         """Processes BIN files and extracts necessary details on the fly."""
         mavlog = mavutil.mavlink_connection(self.log_file_path)
         self.boot_time = mavlog.clock.timebase  # in seconds
-        logger.debug(f"Extracted start time: {self.start_time}")
+        logger.debug(f"Extracted boot time: {self.boot_time}")
         while True:
             msg = mavlog.recv_match(blocking=True)
             if not msg:
                 break
+
+            if self.start_time is None:
+                self.start_time = self.extract_log_ts_ms(msg) / 1000
+                logger.debug(f"Extracted start time: {self.start_time}")
 
             if msg.get_type() == 'MSG' and not self.cube_id:
                 self.cube_id = self.extract_cube_id_from_msg(msg)
@@ -163,7 +168,7 @@ class ArduPilotLogHandler:
 
             if self.cube_id and self.boot_number and self.start_time:
                 logger.debug("All required info extracted. Exiting early.")
-                return self.cube_id, self.start_time, self.boot_number
+                break
         mavlog.rewind()
 
     def extract_cube_id_from_msg(self, msg):
