@@ -5,8 +5,7 @@ import hashlib
 import logging
 import os
 import re
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional
 
 import pandas as pd
 import pyarrow as pa
@@ -64,17 +63,18 @@ class ArduPilotLogHandler:
             logger.error(f"Unsupported log file type: {file_extension}")
 
     def get_clock_offset(self):
-        """Calculates the average clock offset between autopilot's GPS and PC."""
+        """Calculates the average clock offset between GPS and PC."""
         average_offset = 0
         num_offsets = 0
         mavlog = mavutil.mavlink_connection(self.log_file_path)
 
         while True:
-            msg =  mavlog.recv_match(type=['SYSTEM_TIME', 'GPS_RAW_INT'])
+            msg = mavlog.recv_match(type=['SYSTEM_TIME', 'GPS_RAW_INT'])
             if not msg:
                 break
 
-            if msg.get_srcComponent() != 1 or (msg.get_type() == 'GPS_RAW_INT' and msg.fix_type < 3):
+            if (msg.get_srcComponent() != 1 or
+                    (msg.get_type() == 'GPS_RAW_INT' and msg.fix_type < 3)):
                 continue
 
             time_unix_usec = (msg.time_unix_usec if msg.get_type()
@@ -107,10 +107,10 @@ class ArduPilotLogHandler:
         """Processes TLOG files and extracts necessary details on the fly."""
         self.get_clock_offset()
         mavlog = mavutil.mavlink_connection(self.log_file_path)
-        gps_fix = False
         while True:
             try:
-                msg = mavlog.recv_match(type=['STATUSTEXT', 'PARAM_VALUE', 'SYSTEM_TIME'])
+                msg = mavlog.recv_match(type=['STATUSTEXT', 'PARAM_VALUE',
+                                              'SYSTEM_TIME'])
                 if msg is None or msg.get_type() is None:
                     logger.debug("End of file reached.")
                     break
@@ -121,7 +121,8 @@ class ArduPilotLogHandler:
                         logger.debug(f"Extracted cube_id: {self.cube_id}")
 
                 if msg.get_type() == "SYSTEM_TIME" and not self.start_time:
-                    self.start_time = ((msg.time_unix_usec - msg.time_boot_ms) / 1_000_000)
+                    self.start_time = ((msg.time_unix_usec -
+                                        msg.time_boot_ms * 1000) / 1_000_000)
                     self.start_time -= self.clock_offset
                     logger.debug(f"Extracted timestamp: {self.start_time}")
 
@@ -143,7 +144,8 @@ class ArduPilotLogHandler:
     def process_bin_on_the_fly(self):
         """Processes BIN files and extracts necessary details on the fly."""
         mavlog = mavutil.mavlink_connection(self.log_file_path)
-        self.start_time = mavlog.clock.timebase # in seconds
+        self.boot_time = mavlog.clock.timebase  # in seconds
+        logger.debug(f"Extracted start time: {self.start_time}")
         while True:
             msg = mavlog.recv_match(blocking=True)
             if not msg:
@@ -199,7 +201,7 @@ class ArduPilotLogHandler:
         return sha256_hash.hexdigest()
 
     def extract_parquet(self):
-        """Extracts time-series data from log and saves it in Parquet format."""
+        """Extracts time-series data and saves it in Parquet format."""
         if self.log_type == "TLOG":
             self.extract_tlog_to_parquet()
         else:
@@ -207,11 +209,10 @@ class ArduPilotLogHandler:
             self.extract_bin_parquet_ts()
 
     def extract_bin_parquet_ts(self, batch_size=500000):
-        """Extract time-series data from BIN log and save it in Parquet format."""
+        """Extract time-series data BIN log and save it in Parquet format."""
         logger.debug(f"Extracting timeseries data from {self.log_file_path}")
         mavlog = mavutil.mavlink_connection(self.log_file_path)
         str_units = {"n", "N", "Z"}
-        array_units = {"a"}
 
         schema = pa.schema([
             ("Timestamp", pa.int64()),
@@ -302,8 +303,9 @@ class ArduPilotLogHandler:
                                 ignore_index=True)
                             table = pa.Table.from_pandas(
                                 combined_df, schema=schema)
-                        pq.write_table(table, output_path) 
-                        data_batches[output_path] = {key: [] for key in data_batches[output_path]}
+                        pq.write_table(table, output_path)
+                        data_batches[output_path] = {key: [] for key in
+                                                     data_batches[output_path]}
                         batches_count[output_path] = 0
 
             except Exception as e:
@@ -370,7 +372,7 @@ class ArduPilotLogHandler:
                         details["InstanceKey"] = col
 
     def extract_tlog_to_parquet(self, batch_size=500000):
-        """Extracts telemetry data from a TLOG file and saves it in Parquet format."""
+        """Extracts telemetry data and saves it in Parquet format."""
         mavlog = mavutil.mavlink_connection(self.log_file_path)
         logger.debug(f"Extracting telemetry data from {self.log_file_path}")
         self.get_clock_offset()
@@ -398,7 +400,8 @@ class ArduPilotLogHandler:
                     break
                 line_number += 1
 
-                timestamp = self.extract_log_ts_ms(msg) - (self.clock_offset*1000)
+                timestamp = (self.extract_log_ts_ms(msg) -
+                             (self.clock_offset*1000))
 
                 msg_path = f"MessageType={msg.get_type()}"
                 instance = msg.get_srcComponent()
@@ -450,11 +453,13 @@ class ArduPilotLogHandler:
                         if os.path.exists(output_path):
                             existing_table = pq.read_table(output_path)
                             combined_df = pd.concat(
-                                [existing_table.to_pandas(), df], ignore_index=True)
+                                [existing_table.to_pandas(),
+                                 df], ignore_index=True)
                             table = pa.Table.from_pandas(
                                 combined_df, schema=schema)
                         pq.write_table(table, output_path)
-                        data_batches[output_path] = {key: [] for key in data_batches[output_path]}
+                        data_batches[output_path] = {
+                            key: [] for key in data_batches[output_path]}
                         batches_count[output_path] = 0
 
             except Exception as e:
@@ -465,10 +470,9 @@ class ArduPilotLogHandler:
             df = pd.DataFrame(data)
             table = pa.Table.from_pandas(df, schema=schema)
             pq.write_table(table, output_path)
-
         logger.debug("Telemetry data extraction completed.")
         mavlog.rewind()
-    
+
     def print_progress(self, threshold=100000):
         """Prints progress message after every threshold messages."""
         # create a static variable to keep track of the count
@@ -494,8 +498,8 @@ if __name__ == "__main__":
     start_time = ap_handler.start_time
     boot_number = ap_handler.boot_number
 
-    logger.debug(f"Log UID: {log_uid}, Cube ID: {cube_id}, Timestamp: {start_time}, "
+    logger.debug(f"Log UID: {log_uid}, Cube ID: {cube_id}, "
+                 f"Timestamp: {start_time}, "
                  f"Boot Number: {boot_number}")
-    
+
     ap_handler.extract_parquet()
-    
