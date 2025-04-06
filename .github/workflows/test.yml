@@ -1,0 +1,61 @@
+# .github/workflows/test.yml
+name: ArduPilot Log Handler Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-benchmark pytest-cov pyarrow pandas memory-profiler
+
+      - name: Ensure report directory
+        run: mkdir -p reports
+
+      - name: Run Extraction Tests
+        run: pytest tests/test_extraction.py --json-report --json-report-file=reports/extraction.json || true
+
+      - name: Run Performance Tests
+        run: pytest tests/test_performance.py --json-report --json-report-file=reports/performance.json || true
+
+      - name: Run Benchmark
+        run: pytest tests/test_benchmark.py --benchmark-only --benchmark-storage=reports/benchmarks.json
+
+      - name: Generate Output Folder
+        run: python tools/generate_output.py
+
+      - name: Run Output-Based Tests
+        run: |
+          pytest tests/test_pq_schema.py --json-report --json-report-file=reports/schema.json || true
+          pytest tests/test_pq_generated_folders.py --json-report --json-report-file=reports/folder.json || true
+
+      - name: Generate Test Report Summary
+        run: python tools/generate_test_summary.py
+
+      - name: Run Coverage Report
+        run: |
+          pytest --cov=ardupilot_log_handler --cov-report=xml --cov-report=html --cov-report=term
+          mkdir -p reports/coverage
+          cp coverage.xml reports/coverage/
+          cp -r htmlcov reports/coverage/html/
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: |
+            reports/
+            .benchmarks/
+            htmlcov/
