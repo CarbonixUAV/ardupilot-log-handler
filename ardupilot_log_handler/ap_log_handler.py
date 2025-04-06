@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 import pandas as pd
@@ -227,6 +228,7 @@ class ArduPilotLogHandler:
             ("BinaryValue", pa.binary())
         ])
 
+        start_time = time.time()
         data_batches = {}
         batches_count = {}
         line_number = 0
@@ -323,6 +325,10 @@ class ArduPilotLogHandler:
             pq.write_table(table, output_path)
         print('')
         logger.debug("Telemetry data extraction completed.")
+
+        elapsed = time.time() - start_time
+        rate = line_number / elapsed if elapsed > 0 else 0
+        logger.debug(f"Processed {line_number} messages in {elapsed:.2f}s ({rate:.1f} msg/s)")
         mavlog.rewind()
 
     def extract_msg_format(self):
