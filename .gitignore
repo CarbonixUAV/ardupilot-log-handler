@@ -1,1 +1,10 @@
+# .gitignore
 .vscode
+output/
+.benchmarks/
+htmlcov/
+reports/
+output/
+*.pyc
+__pycache__/
+*.log
