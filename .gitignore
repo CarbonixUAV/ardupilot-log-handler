@@ -8,3 +8,4 @@ output/
 *.pyc
 __pycache__/
 *.log
+.venv/
