@@ -19,7 +19,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-benchmark pytest-cov pyarrow pandas memory-profiler
+          pip install pytest pytest-benchmark pytest-cov pyarrow pandas memory-profiler matplotlib
 
       - name: Ensure report directory
         run: mkdir -p reports
