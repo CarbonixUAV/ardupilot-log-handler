@@ -19,7 +19,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-benchmark pytest-cov pyarrow pandas memory-profiler matplotlib
+          pip install pytest pytest-benchmark pytest-cov pytest-json-report pyarrow pandas memory-profiler matplotlib
 
       - name: Ensure report directory
         run: mkdir -p reports
@@ -59,3 +59,8 @@ jobs:
             reports/
             .benchmarks/
             htmlcov/
+
+      - name: Publish Test Report to Summary
+        run: |
+          echo "### Test Summary Report" >> $GITHUB_STEP_SUMMARY
+          cat reports/test_report.md >> $GITHUB_STEP_SUMMARY
