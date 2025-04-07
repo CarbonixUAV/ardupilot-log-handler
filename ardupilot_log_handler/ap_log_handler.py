@@ -214,7 +214,169 @@ class ArduPilotLogHandler:
             self.extract_msg_format()
             self.extract_bin_parquet_ts()
 
-    def extract_bin_parquet_ts(self, batch_size=500000):
+    def extract_bin_parquet_ts(self, batch_size=10000):
+        """Final optimized version with path handling fix."""
+        logger.debug(f"Converting binary log to Parquet: {self.log_file_path}")
+
+        # 1. Initialize MAVLink reader with minimal overhead
+        mavlog = mavutil.mavlink_connection(self.log_file_path)
+        str_units = {"n", "N", "Z"}
+
+        # 2. Schema definition
+        schema = pa.schema([
+            ("Timestamp", pa.int64()),
+            ("LineNumber", pa.int64()),
+            ("Value", pa.float32()),
+            ("StringValue", pa.string()),
+            ("BinaryValue", pa.binary())
+        ])
+
+        # 3. Output directory structure
+        output_path_prefix = os.path.join(self.output_path, f"LogUID={self.log_uid}")
+        os.makedirs(output_path_prefix, exist_ok=True)
+
+        # 4. Optimized data structures
+        writers = {}
+        dir_cache = set()  # Track created directories
+        line_number = 0
+        start_time = time.time()
+
+        # 5. Pre-build path templates for known message types
+        path_templates = {}
+        for msg_type, fmt in self.log_format.items():
+            if msg_type == "UNIT":
+                continue
+            instance_key = fmt.get("InstanceKey", 0)
+            base_path = os.path.join(output_path_prefix, f"MessageType={msg_type}")
+            path_templates[msg_type] = (instance_key, base_path)
+
+        try:
+            while True:
+                # 6. Bulk message reading
+                msg = mavlog.recv_match(blocking=True)
+                if not msg:
+                    break
+
+                line_number += 1
+                msg_type = msg.get_type()
+
+                if msg_type not in path_templates:
+                    continue
+
+                # 7. Get pre-computed path info
+                instance_key, base_path = path_templates[msg_type]
+                instance = 0
+
+                # 8. Direct field access without getattr overhead
+                fieldnames = msg._fieldnames
+                values = [getattr(msg, f) for f in fieldnames]
+
+                for field, value in zip(fieldnames, values):
+                    if field in ["TimeUS", "MessageType", "mavpackettype"]:
+                        continue
+
+                    if field == instance_key:
+                        instance = value
+                        continue
+
+                    # 9. Fast value conversion
+                    format_type = self.log_format[msg_type].get(f"{field}_F", "")
+
+                    if not format_type or format_type in str_units:
+                        val, value_str, binary_value = None, str(value), None
+                    elif isinstance(value, array.array):
+                        val, value_str, binary_value = None, None, value.tobytes()
+                        if value.typecode == 'h' and value:
+                            val = float(value[0])
+                    else:
+                        try:
+                            val, value_str, binary_value = float(value), None, None
+                        except (TypeError, ValueError):
+                            val, value_str, binary_value = None, str(value), None
+
+                    # 10. Path construction with dynamic directory creation
+                    dir_path = os.path.join(base_path, f"Instance={instance}", f"KeyName={field}")
+                    file_path = os.path.join(dir_path, "file.parquet")
+
+                    # 11. Create directory if needed (with cache)
+                    if dir_path not in dir_cache:
+                        os.makedirs(dir_path, exist_ok=True)
+                        dir_cache.add(dir_path)
+
+                    # 12. Batch collection
+                    if file_path not in writers:
+                        writers[file_path] = {
+                            'timestamps': array.array('q'),
+                            'linenums': array.array('q'),
+                            'values': array.array('f'),
+                            'str_values': [],
+                            'bin_values': [],
+                            'count': 0
+                        }
+
+                    data = writers[file_path]
+                    data['timestamps'].append(int(msg._timestamp * 1000) if hasattr(msg, "_timestamp") else 0)
+                    data['linenums'].append(line_number)
+                    if val is not None:
+                        data['values'].append(val)
+                    else:
+                        data['values'].append(float('nan'))
+                    data['str_values'].append(value_str)
+                    data['bin_values'].append(binary_value)
+                    data['count'] += 1
+
+                    # 13. Batch writing
+                    if data['count'] >= batch_size:
+                        self._write_parquet_batch_final(data, file_path, schema)
+                        data['timestamps'] = array.array('q')
+                        data['linenums'] = array.array('q')
+                        data['values'] = array.array('f')
+                        data['str_values'] = []
+                        data['bin_values'] = []
+                        data['count'] = 0
+
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+        finally:
+            # Final writes
+            for file_path, data in writers.items():
+                if data['count'] > 0:
+                    self._write_parquet_batch_final(data, file_path, schema)
+
+        elapsed = time.time() - start_time
+        rate = line_number / elapsed if elapsed > 0 else 0
+        logger.debug(f"Processed {line_number} messages in {elapsed:.2f}s ({rate:.1f} msg/s)")
+
+    def _write_parquet_batch_final(self, data, file_path, schema):
+        """Optimized batch writing with error handling."""
+        try:
+            # Convert to pyarrow arrays directly
+            timestamp_arr = pa.array(data['timestamps'], type=pa.int64())
+            linenum_arr = pa.array(data['linenums'], type=pa.int64())
+            value_arr = pa.array(data['values'], type=pa.float32())
+            str_arr = pa.array(data['str_values'], type=pa.string())
+            bin_arr = pa.array(data['bin_values'], type=pa.binary())
+
+            # Create table and write
+            table = pa.Table.from_arrays(
+                [timestamp_arr, linenum_arr, value_arr, str_arr, bin_arr],
+                schema=schema
+            )
+
+            # Write with optimal settings
+            pq.write_table(
+                table,
+                file_path,
+                compression='snappy',
+                use_dictionary=False,
+                write_statistics=False,
+                data_page_size=2*1024*1024  # 2MB pages
+            )
+        except Exception as e:
+            logger.error(f"Error writing to {file_path}: {e}")
+            raise
+
+    def extract_bin_parquet_ts_old(self, batch_size=500000):
         """Extract time-series data BIN log and save it in Parquet format."""
         logger.debug(f"Extracting timeseries data from {self.log_file_path}")
         mavlog = mavutil.mavlink_connection(self.log_file_path)
